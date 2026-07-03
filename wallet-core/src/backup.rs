@@ -57,6 +57,10 @@ pub struct GiftRecord {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub backup_key_index: Option<u32>,
     pub created_at: String,
+    /// Where the bill was exported, e.g. "Airlock: /gifts/bill.png" (display
+    /// string; set by the app at save time).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bill_path: Option<String>,
 }
 
 pub fn airlock_json(wallet: &Wallet, created_at: &str) -> String {
@@ -103,5 +107,6 @@ pub fn gift_record(wallet: &Wallet, created_at: &str) -> GiftRecord {
         backup_pubkey_hex: backup.map(|b| b.pubkey_hex.clone()),
         backup_key_index: backup.map(|b| b.index),
         created_at: created_at.to_string(),
+        bill_path: None,
     }
 }

@@ -1,9 +1,11 @@
 import { Theme, UISize, ButtonVariant } from "@ui/theme.slint";
-import { Callbacks, Ui, Preview, Gifts, Detail, GiftRow } from "callbacks.slint";
+import { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, SaveBrowser, FileRow } from "callbacks.slint";
 import { Button } from "@ui/button.slint";
 import { Icon } from "@ui/icon.slint";
+import { Input } from "@ui/input.slint";
+import { SegmentedControl } from "@ui/segmented_control.slint";
 
-export { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, Theme }
+export { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, SaveBrowser, FileRow, Theme }
 
 component PrimaryAction inherits Button {
     background: Theme.palette-primary;
@@ -107,6 +109,109 @@ component VariantOption inherits Rectangle {
                 font-size: 13px;
                 wrap: word-wrap;
             }
+        }
+    }
+}
+
+// Modal name prompt (text-editor pattern): anchored high so the on-screen
+// keyboard (~396px) never covers it; keyboard "Done" confirms.
+component NamePrompt inherits Rectangle {
+    in property <string> title;
+    in property <string> confirm-label;
+    in property <string> placeholder: "Name";
+    callback confirmed(string);
+    callback cancelled();
+
+    background: rgba(0, 0, 0, 0.55);
+
+    TouchArea {
+        clicked => { root.cancelled(); }
+    }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 96px;
+        width: 86%;
+        height: 214px;
+        background: Theme.palette-surface;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: Theme.palette-border;
+
+        // Swallow taps on the panel so they don't dismiss.
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+
+            Text {
+                text: root.title;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 20px;
+                font-weight: 600;
+            }
+            Input {
+                value <=> Ui.input-text;
+                placeholder: root.placeholder;
+                submitted => {
+                    self.clear-focus();
+                    root.confirmed(Ui.input-text);
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                SecondaryAction {
+                    horizontal-stretch: 1;
+                    text: "Cancel";
+                    clicked => { root.cancelled(); }
+                }
+                PrimaryAction {
+                    horizontal-stretch: 1;
+                    text: root.confirm-label;
+                    clicked => { root.confirmed(Ui.input-text); }
+                }
+            }
+        }
+    }
+}
+
+// One row in the save-browser listing (folders descend; files are context).
+component SaveEntry inherits Rectangle {
+    in property <FileRow> entry;
+    height: 56px;
+    border-radius: 12px;
+    background: touch.has-hover ? Theme.palette-secondary : Theme.palette-secondary.with-alpha(0.2);
+    touch := TouchArea {
+        clicked => { Callbacks.save-entry-activated(root.entry.name, root.entry.is-folder); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
+        Image {
+            width: 22px;
+            y: (parent.height - self.height) / 2;
+            height: 22px;
+            source: root.entry.is-folder ? @image-url("icons/folder.svg") : @image-url("icons/file.svg");
+            colorize: root.entry.is-folder ? Theme.palette-primary : Theme.palette-muted;
+        }
+        Text {
+            text: root.entry.name;
+            color: root.entry.is-folder ? Theme.palette-foreground : Theme.palette-muted;
+            font-family: "Montserrat";
+            font-size: 15px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.entry.info;
+            color: Theme.palette-muted;
+            font-family: "Montserrat";
+            font-size: 12px;
+            vertical-alignment: center;
         }
     }
 }
@@ -339,7 +444,7 @@ export component AppWindow inherits Window {
                 wrap: word-wrap;
             }
             if Preview.saved: Text {
-                text: "Saved to Airlock: " + Preview.saved-path;
+                text: "Saved to " + Preview.saved-path;
                 color: Theme.palette-primary;
                 font-family: "Montserrat";
                 font-size: 12px;
@@ -367,9 +472,9 @@ export component AppWindow inherits Window {
                 }
                 PrimaryAction {
                     horizontal-stretch: 1;
-                    text: Preview.saved ? "Saved ✓" : "Save bill";
+                    text: Preview.saved ? "Saved" : "Save bill";
                     disabled: Ui.busy || Preview.saved;
-                    clicked => { Callbacks.save-bill(); }
+                    clicked => { Callbacks.open-save-browser(); }
                 }
             }
         }
@@ -462,6 +567,13 @@ export component AppWindow inherits Window {
                 font-family: "Montserrat";
                 font-size: 13px;
             }
+            if Detail.bill-path != "": Text {
+                text: "Bill saved to " + Detail.bill-path;
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: char-wrap;
+            }
             Text {
                 text: "Internal pubkey (needed for recovery)";
                 color: Theme.palette-muted;
@@ -523,6 +635,162 @@ export component AppWindow inherits Window {
                 text: "Show backup key";
                 disabled: Ui.busy;
                 clicked => { Callbacks.backup-view(); }
+            }
+        }
+
+        // ------------------------------------------------ screen 4: save browser
+        if Ui.screen == 4: VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 16px + UISize.control-center-status-bar-height;
+            padding-bottom: 20px;
+            spacing: 10px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                BackBtn {
+                    clicked => {
+                        Ui.show-new-folder = false;
+                        Ui.screen = 1;
+                    }
+                }
+                Text {
+                    text: "Save bill";
+                    color: Theme.palette-foreground;
+                    font-family: "Montserrat";
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // Filename near the top: the on-screen keyboard (~396px) never
+            // covers it, and "Done" just drops the keyboard. vertical-stretch 0
+            // keeps the header block pinned when the listing is empty (all
+            // spare space must go to the Flickable, or tap targets shift).
+            Input {
+                vertical-stretch: 0;
+                value <=> SaveBrowser.filename;
+                placeholder: "File name";
+                submitted => { self.clear-focus(); }
+            }
+            Text {
+                text: "Saves " + SaveBrowser.filename + ".png + .json";
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 12px;
+            }
+
+            HorizontalLayout {
+                height: 64px;
+                spacing: 8px;
+                SegmentedControl {
+                    horizontal-stretch: 1;
+                    options: ["Internal", "Airlock", "USB"];
+                    selected-index <=> SaveBrowser.location-index;
+                    changed(idx, label) => {
+                        Callbacks.save-location-changed(idx);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                if !SaveBrowser.at-root: BackBtn {
+                    clicked => { Callbacks.save-go-back(); }
+                }
+                Text {
+                    text: SaveBrowser.path;
+                    color: Theme.palette-muted;
+                    font-family: "Montserrat";
+                    font-size: 14px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                new-folder-btn := Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 22px;
+                    background: nf-touch.pressed ? Theme.palette-secondary-pressed : Theme.palette-secondary.with-alpha(0.4);
+                    nf-touch := TouchArea {
+                        clicked => {
+                            Ui.input-text = "";
+                            Ui.show-new-folder = true;
+                        }
+                    }
+                    Text {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2 - 2px;
+                        text: "+";
+                        color: Theme.palette-foreground;
+                        font-size: 26px;
+                        font-family: "Montserrat";
+                    }
+                }
+            }
+
+            if SaveBrowser.status != "": Text {
+                text: SaveBrowser.status;
+                color: #e05050;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if Ui.error != "": Text {
+                text: Ui.error;
+                color: #e05050;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                viewport-height: save-list.preferred-height;
+                save-list := VerticalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for entry in SaveBrowser.entries: SaveEntry { entry: entry; }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                SecondaryAction {
+                    horizontal-stretch: 1;
+                    text: "Cancel";
+                    disabled: Ui.busy;
+                    clicked => {
+                        Ui.show-new-folder = false;
+                        Ui.screen = 1;
+                    }
+                }
+                PrimaryAction {
+                    horizontal-stretch: 1;
+                    text: "Save here";
+                    disabled: Ui.busy || SaveBrowser.status != "";
+                    clicked => { Callbacks.save-confirm(SaveBrowser.filename); }
+                }
+            }
+        }
+
+        // ------------------------------------------------ new-folder prompt
+        if Ui.show-new-folder: NamePrompt {
+            width: 100%;
+            height: 100%;
+            title: "New folder";
+            confirm-label: "Create";
+            placeholder: "Folder name";
+            confirmed(name) => {
+                Ui.show-new-folder = false;
+                Callbacks.save-new-folder(name);
+            }
+            cancelled => {
+                Ui.show-new-folder = false;
             }
         }
 

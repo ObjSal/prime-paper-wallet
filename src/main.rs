@@ -15,9 +15,13 @@ use wallet_core::{bill, derive, keys, qr, Variant};
 app_ui!("prime-paper-wallet");
 security::use_api!();
 
-/// Gift metadata (no private keys) on Internal (User) storage; exported
-/// bills + full backup JSONs go to the same-named directory on Airlock.
-const GIFTS_DIR: &str = "/paper-wallets";
+/// Hidden app-private metadata store on Internal (User) storage — kept out
+/// of the visible tree so a user-chosen export directory can never collide
+/// with it (the full backup JSON parses as a GiftRecord and would show up
+/// as a phantom gift).
+const META_DIR: &str = "/.paper-wallets-meta";
+/// Default export directory offered in the save browser (on Airlock).
+const EXPORT_DIR: &str = "/paper-wallets";
 
 type Fs = fs::FileSystem<fs_permissions::FileSystemPermissions>;
 
@@ -28,6 +32,9 @@ struct State {
     current: Option<(wallet_core::Wallet, String, String)>,
     /// Record backing the open detail screen.
     open_gift: Option<GiftRecord>,
+    /// Save-browser cursor: where "Save here" will write the bill.
+    save_location: Location,
+    save_path: String,
 }
 
 fn app_main(cx: AppContext, ui: AppWindow) {
@@ -38,15 +45,20 @@ fn app_main(cx: AppContext, ui: AppWindow) {
 
     let fs = cx.fs.clone();
     let ui_weak = ui.as_weak();
-    let state = Rc::new(RefCell::new(State { current: None, open_gift: None }));
+    let state = Rc::new(RefCell::new(State {
+        current: None,
+        open_gift: None,
+        save_location: Location::Airlock,
+        save_path: EXPORT_DIR.to_string(),
+    }));
 
-    if let Err(e) = fs.create_dir(GIFTS_DIR, Location::User) {
+    if let Err(e) = fs.create_dir(META_DIR, Location::User) {
         if !matches!(e, fs::Error::FileAlreadyExists) {
-            log::warn!("could not create {GIFTS_DIR}: {e:?}");
+            log::warn!("could not create {META_DIR}: {e:?}");
         }
     }
 
-    // Re-scan /paper-wallets metadata and push rows into the Gifts global.
+    // Re-scan the metadata store and push rows into the Gifts global.
     let refresh_gifts: Rc<dyn Fn()> = {
         let fs = fs.clone();
         let ui_weak = ui_weak.clone();
@@ -158,15 +170,205 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         });
     }
 
-    // Compose the bill PNG + full backup JSON to Airlock, plus the
-    // private-key-free metadata record to Internal storage.
+    // Re-list the save-browser's current directory into the SaveBrowser global.
+    let refresh_save: Rc<dyn Fn()> = {
+        let fs = fs.clone();
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
+        Rc::new(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let (loc, path) = {
+                let s = state.borrow();
+                (s.save_location, s.save_path.clone())
+            };
+            let mut items: Vec<(bool, String, String)> = Vec::new();
+            let mut status = String::new();
+            match fs.open_dir(path.as_str(), loc) {
+                Ok(dir) => loop {
+                    match dir.next_entry() {
+                        Ok(Some(entry)) => {
+                            if entry.name == "." || entry.name == ".." || entry.name.starts_with('.') {
+                                continue;
+                            }
+                            let info = if entry.is_dir {
+                                "Folder".to_string()
+                            } else {
+                                human_size(entry.len)
+                            };
+                            items.push((entry.is_dir, entry.name, info));
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            status = err_msg(&e);
+                            break;
+                        }
+                    }
+                },
+                Err(e) => status = err_msg(&e),
+            }
+            // Folders first, then alphabetical (case-insensitive).
+            items.sort_by(|a, b| {
+                b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+            });
+            if status.is_empty() {
+                log::info!("cb: save-browse loc={} path={path} n={}", location_name(loc), items.len());
+            } else {
+                log::info!("cb: save-browse loc={} path={path} err={status}", location_name(loc));
+            }
+            let rows: Vec<FileRow> = items
+                .into_iter()
+                .map(|(is_dir, name, info)| FileRow {
+                    name: name.into(),
+                    info: info.into(),
+                    is_folder: is_dir,
+                })
+                .collect();
+            let browser = ui.global::<SaveBrowser>();
+            browser.set_entries(ModelRc::new(VecModel::from(rows)));
+            browser.set_at_root(path == "/");
+            browser.set_path(path.into());
+            browser.set_status(status.into());
+        })
+    };
+
+    // "Save bill" on the preview: open the save-as browser, defaulting to
+    // Airlock:/paper-wallets with the address-derived filename.
+    {
+        let fs = fs.clone();
+        let ui_weak = ui_weak.clone();
+        let state = state.clone();
+        let refresh_save = refresh_save.clone();
+        ui.global::<Callbacks>().on_open_save_browser(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Some(addr12) = state
+                .borrow()
+                .current
+                .as_ref()
+                .map(|(w, _, _)| w.address.chars().take(12).collect::<String>())
+            else {
+                return;
+            };
+            ui.global::<Ui>().set_error("".into());
+            let mut default_path = EXPORT_DIR.to_string();
+            if ensure_airlock_mounted(&fs).is_ok() {
+                if let Err(e) = fs.create_dir(EXPORT_DIR, Location::Airlock) {
+                    if !matches!(e, fs::Error::FileAlreadyExists) {
+                        default_path = "/".to_string();
+                    }
+                }
+            } else {
+                default_path = "/".to_string();
+            }
+            {
+                let mut s = state.borrow_mut();
+                s.save_location = Location::Airlock;
+                s.save_path = default_path.clone();
+            }
+            let browser = ui.global::<SaveBrowser>();
+            browser.set_location_index(1);
+            browser.set_filename(format!("bitcoin_bill_{addr12}").into());
+            log::info!("cb: open-save-browser loc=airlock path={default_path}");
+            refresh_save();
+            ui.global::<Ui>().set_screen(4);
+        });
+    }
+
+    // Switch storage tab: Internal / Airlock / USB. Resets to that root.
+    {
+        let fs = fs.clone();
+        let state = state.clone();
+        let refresh_save = refresh_save.clone();
+        ui.global::<Callbacks>().on_save_location_changed(move |idx| {
+            let loc = location_for(idx);
+            if loc == Location::Airlock {
+                // Browsing needs it mounted; a failed mount surfaces as status.
+                let _ = ensure_airlock_mounted(&fs);
+            }
+            {
+                let mut s = state.borrow_mut();
+                s.save_location = loc;
+                s.save_path = "/".to_string();
+            }
+            refresh_save();
+        });
+    }
+
+    // Tap a row: descend into folders (files are just context).
+    {
+        let state = state.clone();
+        let refresh_save = refresh_save.clone();
+        ui.global::<Callbacks>().on_save_entry_activated(move |name, is_folder| {
+            if !is_folder {
+                return;
+            }
+            {
+                let mut s = state.borrow_mut();
+                s.save_path = join_path(&s.save_path.clone(), name.as_str());
+            }
+            refresh_save();
+        });
+    }
+
+    // Up one directory.
+    {
+        let state = state.clone();
+        let refresh_save = refresh_save.clone();
+        ui.global::<Callbacks>().on_save_go_back(move || {
+            {
+                let mut s = state.borrow_mut();
+                s.save_path = parent_path(&s.save_path);
+            }
+            refresh_save();
+        });
+    }
+
+    // Create a folder in the browser's current directory.
+    {
+        let fs = fs.clone();
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
+        let refresh_save = refresh_save.clone();
+        ui.global::<Callbacks>().on_save_new_folder(move |name| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let name = name.trim().to_string();
+            if name.is_empty() || name.contains('/') {
+                ui.global::<Ui>().set_error("Invalid folder name".into());
+                return;
+            }
+            let (loc, dir) = {
+                let s = state.borrow();
+                (s.save_location, s.save_path.clone())
+            };
+            let full = join_path(&dir, &name);
+            match fs.create_dir(full.as_str(), loc) {
+                Ok(_) => {
+                    log::info!("cb: new-folder {full} ok");
+                    ui.global::<Ui>().set_error("".into());
+                }
+                Err(e) => {
+                    let msg = err_msg(&e);
+                    log::info!("cb: new-folder {full} err={msg}");
+                    ui.global::<Ui>().set_error(msg.into());
+                }
+            }
+            refresh_save();
+        });
+    }
+
+    // "Save here": compose the bill and write it to the browser's cursor,
+    // plus the private-key-free metadata record to Internal storage.
     {
         let fs = fs.clone();
         let ui_weak = ui_weak.clone();
         let state = state.clone();
         let refresh_gifts = refresh_gifts.clone();
-        ui.global::<Callbacks>().on_save_bill(move || {
+        ui.global::<Callbacks>().on_save_confirm(move |filename| {
             let Some(u) = ui_weak.upgrade() else { return };
+            let name = filename.trim().to_string();
+            if name.is_empty() || name.contains('/') {
+                u.global::<Ui>().set_error("Invalid file name".into());
+                return;
+            }
             u.global::<Ui>().set_error("".into());
             u.global::<Ui>().set_busy(true);
 
@@ -176,20 +378,30 @@ fn app_main(cx: AppContext, ui: AppWindow) {
             let refresh_gifts = refresh_gifts.clone();
             Timer::single_shot(Duration::from_millis(150), move || {
                 let Some(ui) = ui_weak.upgrade() else { return };
+                let (loc, dir) = {
+                    let s = state.borrow();
+                    (s.save_location, s.save_path.clone())
+                };
                 let result = state
                     .borrow()
                     .current
                     .as_ref()
                     .ok_or_else(|| "Nothing to save".to_string())
-                    .and_then(|(wallet, year, ts)| save_gift(&fs, wallet, year, ts));
+                    .and_then(|(wallet, year, ts)| save_gift(&fs, wallet, year, ts, loc, &dir, &name));
                 ui.global::<Ui>().set_busy(false);
                 match result {
                     Ok((png_path, json_path)) => {
-                        log::info!("cb: save-bill ok png={png_path} json={json_path}");
+                        log::info!(
+                            "cb: save-bill ok loc={} png={png_path} json={json_path}",
+                            location_name(loc)
+                        );
                         let p = ui.global::<Preview>();
                         p.set_saved(true);
-                        p.set_saved_path(png_path.as_str().into());
+                        p.set_saved_path(
+                            format!("{} {png_path}", location_display(loc)).into(),
+                        );
                         refresh_gifts();
+                        ui.global::<Ui>().set_screen(1);
                     }
                     Err(e) => {
                         log::info!("cb: save-bill err={e}");
@@ -237,6 +449,7 @@ fn app_main(cx: AppContext, ui: AppWindow) {
                     d.set_address(record.address.as_str().into());
                     d.set_type_name(record.type_.as_str().into());
                     d.set_created_at(record.created_at.as_str().into());
+                    d.set_bill_path(record.bill_path.clone().unwrap_or_default().into());
                     d.set_internal_pubkey(record.internal_pubkey_hex.as_str().into());
                     d.set_has_backup(record.has_backup_key);
                     d.set_backup_index(record.backup_key_index.map(|i| i as i32).unwrap_or(-1));
@@ -306,55 +519,69 @@ fn app_main(cx: AppContext, ui: AppWindow) {
 // Persistence
 // ---------------------------------------------------------------------------
 
-/// Write bill PNG + full backup JSON to Airlock and the metadata record to
-/// Internal storage. Returns (png_path, json_path).
+/// Write bill PNG + full backup JSON to the user-chosen location/directory,
+/// and the metadata record to Internal storage. Returns (png_path, json_path).
 fn save_gift(
     fs: &Fs,
     wallet: &wallet_core::Wallet,
     year: &str,
     ts: &str,
+    loc: Location,
+    dir: &str,
+    name: &str,
 ) -> Result<(String, String), String> {
-    let png = bill::compose_bill(wallet, year, ts).map_err(|e| e.to_string())?;
-    let addr12: String = wallet.address.chars().take(12).collect();
+    let png_path = join_path(dir, &format!("{name}.png"));
+    let json_path = join_path(dir, &format!("{name}.json"));
 
-    ensure_airlock_mounted(fs)?;
-
-    for loc in [Location::Airlock, Location::User] {
-        if let Err(e) = fs.create_dir(GIFTS_DIR, loc) {
-            if !matches!(e, fs::Error::FileAlreadyExists) {
-                return Err(err_msg(&e));
-            }
-        }
+    if loc == Location::Airlock {
+        ensure_airlock_mounted(fs)?;
     }
 
-    let png_path = format!("{GIFTS_DIR}/bitcoin_bill_{addr12}.png");
-    let json_path = format!("{GIFTS_DIR}/bitcoin_bill_{addr12}.json");
-    write_bytes(fs, &png_path, Location::Airlock, &png)?;
+    // A bill names a unique key — never silently overwrite one.
+    if fs.open_file(png_path.as_str(), loc, OpenFlags::READ_ONLY).is_ok() {
+        return Err(format!("{name}.png already exists — pick another name"));
+    }
+
+    let png = bill::compose_bill(wallet, year, ts).map_err(|e| e.to_string())?;
+    write_bytes(fs, &png_path, loc, &png)?;
     write_bytes(
         fs,
         &json_path,
-        Location::Airlock,
+        loc,
         wallet_core::backup::airlock_json(wallet, ts).as_bytes(),
     )?;
 
-    let record = wallet_core::backup::gift_record(wallet, ts);
+    let addr12: String = wallet.address.chars().take(12).collect();
+    if let Err(e) = fs.create_dir(META_DIR, Location::User) {
+        if !matches!(e, fs::Error::FileAlreadyExists) {
+            return Err(err_msg(&e));
+        }
+    }
+    let mut record = wallet_core::backup::gift_record(wallet, ts);
+    record.bill_path = Some(format!("{} {png_path}", location_display(loc)));
     let record_json =
         serde_json_string(&record).map_err(|_| "Could not serialize record".to_string())?;
     write_bytes(
         fs,
-        &format!("{GIFTS_DIR}/{addr12}.json"),
+        &format!("{META_DIR}/{addr12}.json"),
         Location::User,
         record_json.as_bytes(),
     )?;
 
-    // Unmount Airlock after the export (the next save remounts): a fatfs
-    // unmount is the full-flush path the USB mass-storage flow also uses, so
-    // the exported files are durable even across an unclean sim shutdown.
-    // Then flush the User volume, which carries both the airlock image file
-    // and the metadata record.
+    // Durability: unmounting Airlock is the full-flush path the USB
+    // mass-storage flow also uses (the next save/browse remounts); then
+    // flush whichever volumes carry data — User always (metadata + the
+    // airlock image file), USB when it was the target.
     let mut flush_fs = fs.clone();
-    if let Err(e) = flush_fs.unmount_airlock() {
-        log::warn!("airlock unmount after export failed: {e:?}");
+    if loc == Location::Airlock {
+        if let Err(e) = flush_fs.unmount_airlock() {
+            log::warn!("airlock unmount after export failed: {e:?}");
+        }
+    }
+    if loc == Location::Usb {
+        if let Err(e) = flush_fs.flush(Location::Usb) {
+            log::warn!("flush Usb failed: {e:?}");
+        }
     }
     if let Err(e) = flush_fs.flush(Location::User) {
         log::warn!("flush User failed: {e:?}");
@@ -391,7 +618,7 @@ fn write_bytes(fs: &Fs, path: &str, loc: Location, bytes: &[u8]) -> Result<(), S
 
 fn load_records(fs: &Fs) -> Vec<(String, GiftRecord)> {
     let mut records = Vec::new();
-    if let Ok(dir) = fs.open_dir(GIFTS_DIR, Location::User) {
+    if let Ok(dir) = fs.open_dir(META_DIR, Location::User) {
         while let Ok(Some(entry)) = dir.next_entry() {
             if entry.is_file && entry.name.to_lowercase().ends_with(".json") {
                 match load_record(fs, &entry.name) {
@@ -405,7 +632,7 @@ fn load_records(fs: &Fs) -> Vec<(String, GiftRecord)> {
 }
 
 fn load_record(fs: &Fs, filename: &str) -> Result<GiftRecord, String> {
-    let data = read_bytes(fs, &format!("{GIFTS_DIR}/{filename}"), Location::User)?;
+    let data = read_bytes(fs, &format!("{META_DIR}/{filename}"), Location::User)?;
     wallet_core::backup::from_json(&data).map_err(|_| "Invalid gift record".to_string())
 }
 
@@ -444,6 +671,61 @@ fn variant_name_log(v: Variant) -> &'static str {
         Variant::Segwit => "segwit",
         Variant::Taproot => "taproot",
         Variant::TaprootBackup => "taproot-backup",
+    }
+}
+
+fn location_for(index: i32) -> Location {
+    match index {
+        1 => Location::Airlock,
+        2 => Location::Usb,
+        _ => Location::User,
+    }
+}
+
+fn location_name(loc: Location) -> &'static str {
+    match loc {
+        Location::Airlock => "airlock",
+        Location::Usb => "usb",
+        _ => "internal",
+    }
+}
+
+/// Prefix for user-facing "saved to" strings, e.g. "Airlock: /gifts/a.png".
+fn location_display(loc: Location) -> &'static str {
+    match loc {
+        Location::Airlock => "Airlock:",
+        Location::Usb => "USB:",
+        _ => "Internal:",
+    }
+}
+
+fn join_path(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+fn parent_path(path: &str) -> String {
+    match path.rfind('/') {
+        Some(0) | None => "/".to_string(),
+        Some(i) => path[..i].to_string(),
+    }
+}
+
+fn human_size(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }
 

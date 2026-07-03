@@ -8,19 +8,34 @@ export struct GiftRow {
     has-backup: bool,
 }
 
+// One row in the save-browser directory listing.
+export struct FileRow {
+    name: string,
+    info: string,      // human size, or "Folder"
+    is-folder: bool,
+}
+
 export global Callbacks {
     // variant: 0 = segwit, 1 = taproot, 2 = taproot + backup
     callback generate(int);
-    callback save-bill();
+    // open the save-as browser for the previewed wallet
+    callback open-save-browser();
     callback discard();
     callback refresh-gifts();
     callback open-gift(string);
     // reveal the seed-derived backup WIF on the detail screen
     callback backup-view();
+
+    // save-browser navigation
+    callback save-location-changed(int);      // tab index: 0 Internal, 1 Airlock, 2 USB
+    callback save-entry-activated(string, bool); // name, is-folder -> descend
+    callback save-go-back();                  // up one directory
+    callback save-new-folder(string);         // folder name
+    callback save-confirm(string);            // filename (no extension)
 }
 
 export global Ui {
-    // 0 = home, 1 = preview, 2 = saved gifts, 3 = gift detail
+    // 0 = home, 1 = preview, 2 = saved gifts, 3 = gift detail, 4 = save browser
     in-out property <int> screen: 0;
     // home-screen variant picker; default to the flagship two-key gift
     in-out property <int> variant-index: 2;
@@ -28,6 +43,22 @@ export global Ui {
     in property <string> info: "";
     in property <string> error: "";
     in property <int> gift-count: 0;
+    // save-browser "new folder" prompt + its shared text field
+    in-out property <bool> show-new-folder: false;
+    in-out property <string> input-text: "";
+}
+
+// State of the save-as browser (screen 4), driven from Rust.
+export global SaveBrowser {
+    in property <[FileRow]> entries;
+    in property <string> path: "/";
+    in property <bool> at-root: true;
+    // Which storage tab is active: 0 = Internal (User), 1 = Airlock, 2 = USB.
+    in-out property <int> location-index: 1;
+    // Non-empty when the current location can't be listed (e.g. USB not connected).
+    in property <string> status: "";
+    // Proposed base filename (saved as <filename>.png + <filename>.json).
+    in-out property <string> filename: "";
 }
 
 // The freshly generated (not yet saved) wallet shown on the preview screen.
@@ -54,6 +85,7 @@ export global Detail {
     in property <string> address;
     in property <string> type-name;
     in property <string> created-at;
+    in property <string> bill-path;
     in property <string> internal-pubkey;
     in property <bool> has-backup;
     in property <int> backup-index;
