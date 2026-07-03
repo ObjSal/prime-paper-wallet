@@ -1,0 +1,64 @@
+// Shared globals between the Slint UI and the Rust callbacks.
+
+// One saved gift in the on-device list (metadata only — no private keys).
+export struct GiftRow {
+    filename: string,     // backing file in /paper-wallets (stable id)
+    address: string,
+    subtitle: string,     // "taproot_tweaked · 2026-07-02"
+    has-backup: bool,
+}
+
+export global Callbacks {
+    // variant: 0 = segwit, 1 = taproot, 2 = taproot + backup
+    callback generate(int);
+    callback save-bill();
+    callback discard();
+    callback refresh-gifts();
+    callback open-gift(string);
+    // reveal the seed-derived backup WIF on the detail screen
+    callback backup-view();
+}
+
+export global Ui {
+    // 0 = home, 1 = preview, 2 = saved gifts, 3 = gift detail
+    in-out property <int> screen: 0;
+    // home-screen variant picker; default to the flagship two-key gift
+    in-out property <int> variant-index: 2;
+    in-out property <bool> busy: false;
+    in property <string> info: "";
+    in property <string> error: "";
+    in property <int> gift-count: 0;
+}
+
+// The freshly generated (not yet saved) wallet shown on the preview screen.
+export global Preview {
+    in property <string> variant-name;
+    in property <string> address;
+    in property <image> address-qr;
+    in property <image> sweep-qr;
+    in property <string> bill-wif;
+    in property <bool> is-tweaked;
+    in property <bool> has-backup;
+    in property <int> backup-index;
+    in property <bool> saved: false;
+    in property <string> saved-path: "";
+}
+
+export global Gifts {
+    in property <[GiftRow]> gifts;
+    in property <string> status: "";
+}
+
+export global Detail {
+    in property <string> filename;
+    in property <string> address;
+    in property <string> type-name;
+    in property <string> created-at;
+    in property <string> internal-pubkey;
+    in property <bool> has-backup;
+    in property <int> backup-index;
+    // backup reveal (filled by the backup-view callback)
+    in-out property <bool> show-backup: false;
+    in property <string> backup-wif;
+    in property <image> backup-qr;
+}

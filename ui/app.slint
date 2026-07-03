@@ -1,0 +1,546 @@
+import { Theme, UISize, ButtonVariant } from "@ui/theme.slint";
+import { Callbacks, Ui, Preview, Gifts, Detail, GiftRow } from "callbacks.slint";
+import { Button } from "@ui/button.slint";
+import { Icon } from "@ui/icon.slint";
+
+export { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, Theme }
+
+component PrimaryAction inherits Button {
+    background: Theme.palette-primary;
+    foreground: #ffffff;
+    border-color: transparent;
+    border-width: 0px;
+    font-weight: 600;
+    font-family: "Montserrat";
+    button-opacity: self.disabled ? 0.5 : 1.0;
+    touch-expansion: 4px;
+    font-size: 20px;
+    padding-horizontal: 20px;
+    padding-vertical: 12px;
+    icon-size: 20px;
+    border-radius: 24px;
+}
+
+component SecondaryAction inherits Button {
+    background: Theme.palette-secondary;
+    foreground: Theme.palette-foreground;
+    border-color: transparent;
+    border-width: 0px;
+    font-weight: 600;
+    font-family: "Montserrat";
+    touch-expansion: 4px;
+    font-size: 20px;
+    padding-horizontal: 20px;
+    padding-vertical: 12px;
+    icon-size: 20px;
+    border-radius: 24px;
+}
+
+// Raw-TouchArea round button (the SDK IconButton mis-sizes its hit area).
+component BackBtn inherits Rectangle {
+    callback clicked();
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    background: touch.pressed ? Theme.palette-secondary-pressed : Theme.palette-secondary.with-alpha(0.4);
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    Text {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2 - 2px;
+        text: "‹";
+        color: Theme.palette-foreground;
+        font-size: 28px;
+        font-family: "Montserrat";
+    }
+}
+
+// Home-screen variant option row.
+component VariantOption inherits Rectangle {
+    in property <int> index;
+    in property <string> name;
+    in property <string> detail;
+    height: 72px;
+    border-radius: 16px;
+    background: Ui.variant-index == index
+        ? Theme.palette-secondary
+        : Theme.palette-secondary.with-alpha(0.3);
+    TouchArea {
+        clicked => { Ui.variant-index = index; }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        Rectangle {
+            width: 22px;
+            y: (parent.height - self.height) / 2;
+            height: 22px;
+            border-radius: 11px;
+            border-width: 2px;
+            border-color: Ui.variant-index == index ? Theme.palette-primary : Theme.palette-muted;
+            background: transparent;
+            if Ui.variant-index == index: Rectangle {
+                x: 5px;
+                y: 5px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.palette-primary;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.name;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 17px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+component GiftEntry inherits Rectangle {
+    in property <GiftRow> entry;
+    height: 64px;
+    border-radius: 12px;
+    background: touch.has-hover ? Theme.palette-secondary : Theme.palette-secondary.with-alpha(0.25);
+    touch := TouchArea {
+        clicked => { Callbacks.open-gift(root.entry.filename); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.entry.address;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 15px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.entry.subtitle;
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+            }
+        }
+        if root.entry.has-backup: Rectangle {
+            width: 58px;
+            height: 22px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 11px;
+            background: Theme.palette-primary.with-alpha(0.25);
+            Text {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                text: "backup";
+                color: Theme.palette-primary;
+                font-family: "Montserrat";
+                font-size: 11px;
+                font-weight: 600;
+            }
+        }
+        Text {
+            width: 14px;
+            text: "›";
+            color: Theme.palette-muted;
+            font-size: 22px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Paper Wallet";
+    preferred-width: 480px;
+    preferred-height: 800px;
+    background: Theme.palette-background;
+
+    root-container := Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette-background;
+
+        // ------------------------------------------------ screen 0: home
+        if Ui.screen == 0: VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 24px + UISize.control-center-status-bar-height;
+            padding-bottom: 24px;
+            spacing: 14px;
+
+            Text {
+                text: "Paper Wallet";
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 26px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Bitcoin gift bills — generated offline, keys never derived from your wallet seed";
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            VariantOption {
+                index: 0;
+                name: "SegWit";
+                detail: "bc1q… bill, sweeps in any wallet";
+            }
+            VariantOption {
+                index: 1;
+                name: "Taproot";
+                detail: "bc1p… bill, BIP86-compatible key";
+            }
+            VariantOption {
+                index: 2;
+                name: "Taproot + backup";
+                detail: "Two spend paths: printed key, plus a backup key on this device";
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            Text {
+                text: Ui.error != "" ? Ui.error : Ui.info;
+                color: Ui.error != "" ? #e05050 : Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            saved-gifts-row := Rectangle {
+                height: 56px;
+                border-radius: 14px;
+                background: Theme.palette-secondary.with-alpha(0.35);
+                TouchArea {
+                    clicked => {
+                        Callbacks.refresh-gifts();
+                        Ui.screen = 2;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    Text {
+                        text: "Saved gifts (" + Ui.gift-count + ")";
+                        color: Theme.palette-foreground;
+                        font-family: "Montserrat";
+                        font-size: 16px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: "›";
+                        color: Theme.palette-muted;
+                        font-size: 22px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            PrimaryAction {
+                width: 100%;
+                text: "Generate";
+                disabled: Ui.busy;
+                clicked => { Callbacks.generate(Ui.variant-index); }
+            }
+        }
+
+        // ------------------------------------------------ screen 1: preview
+        if Ui.screen == 1: VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 16px + UISize.control-center-status-bar-height;
+            padding-bottom: 20px;
+            spacing: 8px;
+
+            Text {
+                text: Preview.variant-name;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 20px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                Image {
+                    width: 190px;
+                    height: 190px;
+                    source: Preview.address-qr;
+                }
+            }
+            Text {
+                text: "DEPOSIT — " + Preview.address;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 13px;
+                horizontal-alignment: center;
+                wrap: char-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                Image {
+                    width: 190px;
+                    height: 190px;
+                    source: Preview.sweep-qr;
+                }
+            }
+            Text {
+                text: "SPEND (sweep link)" + (Preview.is-tweaked ? " — tweaked key" : "");
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 12px;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: Preview.bill-wif;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: char-wrap;
+            }
+            if Preview.has-backup: Text {
+                text: "Backup spend path: key #" + Preview.backup-index + " (seed-derived, recoverable on this device)";
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if Preview.saved: Text {
+                text: "Saved to Airlock: " + Preview.saved-path;
+                color: Theme.palette-primary;
+                font-family: "Montserrat";
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: char-wrap;
+            }
+            Text {
+                text: Ui.error;
+                color: #e05050;
+                font-family: "Montserrat";
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: 12px;
+                SecondaryAction {
+                    horizontal-stretch: 1;
+                    text: Preview.saved ? "Done" : "Discard";
+                    disabled: Ui.busy;
+                    clicked => { Callbacks.discard(); }
+                }
+                PrimaryAction {
+                    horizontal-stretch: 1;
+                    text: Preview.saved ? "Saved ✓" : "Save bill";
+                    disabled: Ui.busy || Preview.saved;
+                    clicked => { Callbacks.save-bill(); }
+                }
+            }
+        }
+
+        // ------------------------------------------------ screen 2: saved gifts
+        if Ui.screen == 2: VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 16px + UISize.control-center-status-bar-height;
+            padding-bottom: 24px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                BackBtn {
+                    clicked => { Ui.screen = 0; }
+                }
+                Text {
+                    text: "Saved gifts";
+                    color: Theme.palette-foreground;
+                    font-family: "Montserrat";
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            if Gifts.status != "": Text {
+                text: Gifts.status;
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 14px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                viewport-height: gift-list.preferred-height;
+                gift-list := VerticalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    for gift in Gifts.gifts: GiftEntry { entry: gift; }
+                }
+            }
+        }
+
+        // ------------------------------------------------ screen 3: gift detail
+        if Ui.screen == 3: VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 16px + UISize.control-center-status-bar-height;
+            padding-bottom: 24px;
+            spacing: 10px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                BackBtn {
+                    clicked => {
+                        Detail.show-backup = false;
+                        Ui.screen = 2;
+                    }
+                }
+                Text {
+                    text: Detail.type-name;
+                    color: Theme.palette-foreground;
+                    font-family: "Montserrat";
+                    font-size: 20px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            Text {
+                text: Detail.address;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 14px;
+                wrap: char-wrap;
+            }
+            Text {
+                text: "Created " + Detail.created-at;
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+            }
+            Text {
+                text: "Internal pubkey (needed for recovery)";
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+            }
+            Text {
+                text: Detail.internal-pubkey;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 12px;
+                wrap: char-wrap;
+            }
+
+            if Detail.show-backup: VerticalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Backup key #" + Detail.backup-index + " (WIF)";
+                    color: Theme.palette-muted;
+                    font-family: "Montserrat";
+                    font-size: 13px;
+                }
+                Text {
+                    text: Detail.backup-wif;
+                    color: Theme.palette-foreground;
+                    font-family: "Montserrat";
+                    font-size: 12px;
+                    wrap: char-wrap;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Image {
+                        width: 170px;
+                        height: 170px;
+                        source: Detail.backup-qr;
+                    }
+                }
+                Text {
+                    text: "Recover: open recover.html in the web app, enter this WIF + the internal pubkey above";
+                    color: Theme.palette-muted;
+                    font-family: "Montserrat";
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+
+            Text {
+                text: Ui.error;
+                color: #e05050;
+                font-family: "Montserrat";
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            if Detail.has-backup && !Detail.show-backup: PrimaryAction {
+                width: 100%;
+                text: "Show backup key";
+                disabled: Ui.busy;
+                clicked => { Callbacks.backup-view(); }
+            }
+        }
+
+        // ------------------------------------------------ busy overlay
+        if Ui.busy: Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: Theme.palette-background.with-alpha(0.75);
+            TouchArea {}
+            Text {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                text: "Working…";
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 20px;
+                font-weight: 600;
+            }
+        }
+    }
+}

@@ -1,0 +1,57 @@
+[package]
+name = "prime-paper-wallet"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = [".", "wallet-core"]
+
+# KeyOS's own getrandom override (vendored in vendor/getrandom, see its
+# Cargo.toml header): on --cfg keyos (hardware) builds it sources entropy
+# from the os TRNG server; on host/simulator builds it behaves like stock
+# getrandom 0.2. Without this, the armv7a-unknown-xous-elf build fails with
+# "target is not supported". The gift keys' entropy comes through this path.
+[patch.crates-io]
+getrandom = { path = "vendor/getrandom" }
+
+# Debug builds (what `foundation sim` produces) would make EC math, font
+# rasterization and PNG encoding sluggish; optimize just those crates.
+[profile.dev.package.k256]
+opt-level = 3
+[profile.dev.package.elliptic-curve]
+opt-level = 3
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.ripemd]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.ab_glyph]
+opt-level = 3
+[profile.dev.package.ttf-parser]
+opt-level = 3
+[profile.dev.package.qrcode]
+opt-level = 3
+
+[dependencies]
+wallet-core = { path = "wallet-core" }
+# KeyOS security API (vendored — see vendor/security-api/Cargo.toml header):
+# provides GetAppSeed for the deterministic taproot backup keys.
+security = { path = "vendor/security-api" }
+log = "0.4"
+log-server = { package = "xous-api-log", path = "/Users/user/.foundation/sdk/current/lib/keyos/xous/api/log" }
+server = { path = "/Users/user/.foundation/sdk/current/lib/keyos/server" }
+slint-keyos-platform = { path = "/Users/user/.foundation/sdk/current/lib/keyos/slint-keyos-platform/runtime" }
+foundation-themes = { path = "/Users/user/.foundation/sdk/current/lib/keyos/sdk/crates/foundation-themes" }
+
+[build-dependencies]
+foundation-themes = { path = "/Users/user/.foundation/sdk/current/lib/keyos/sdk/crates/foundation-themes" }
+slint-keyos-platform-build = { path = "/Users/user/.foundation/sdk/current/lib/keyos/slint-keyos-platform/build" }

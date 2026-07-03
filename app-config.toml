@@ -1,0 +1,26 @@
+# Foundation application configuration
+app-name = "prime-paper-wallet"
+friendly-app-name = "Paper Wallet"
+launcher-app-name = "Paper Wallet"
+description = "Generate bitcoin gift paper wallets: SegWit or Taproot bills with printable QR codes, offline, with an optional seed-recoverable backup spend path."
+icon = "resources/icon.svg"
+app-id = "0xe87412f1b8afbe1898ecd016f19ff001"
+version = "0.1.0"
+min-keyos-version = "1.0.0"
+
+[publisher]
+name = ""
+contact-email = ""
+support-url = ""
+
+[permissions]
+template = ["gui-app", "fs-generic", "fs-access"]
+# Nothing mounts Airlock in the hosted simulator (on hardware the launcher /
+# mass-storage flows do), so the app mounts it lazily before exporting a
+# bill; FormatAirlock is the recovery path when the volume was never
+# formatted (fresh sim) — it only runs after a failed mount.
+"os/fs" = ["MountAirlock", "FormatAirlock"]
+# Deterministic backup keys for taproot gift wallets: HMAC-derived per-app
+# seed from the wallet master seed (PIN-gated on hardware; kernel-attested
+# app identity). The printed gift key itself is pure TRNG, never seed-derived.
+"os/security" = ["GetAppSeed"]
