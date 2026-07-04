@@ -282,6 +282,43 @@ fn custom_template_round_trips_qrs_all_variants() {
     }
 }
 
+/// Nothing in the engine may assume the classic landscape shape: a square
+/// canvas with side-by-side QRs, a text plate, and a horizontal timestamp.
+#[test]
+fn square_canvas_composes_and_round_trips() {
+    let mut img = RgbImage::from_pixel(1000, 1000, Rgb([247, 243, 233]));
+    let spec = TemplateSpec {
+        width: 1000,
+        height: 1000,
+        address_qr: Rect { x1: 60, y1: 200, x2: 460, y2: 600 },
+        privkey_qr: Rect { x1: 540, y1: 200, x2: 940, y2: 600 },
+        address_text: Some(Rect { x1: 100, y1: 660, x2: 900, y2: 730 }),
+        privkey_text: Some(Rect { x1: 60, y1: 52, x2: 940, y2: 94 }),
+        timestamp: Some(Rect { x1: 100, y1: 780, x2: 900, y2: 810 }),
+    };
+    // Dark plate behind the WIF marker: exercises the adaptive (light) ink.
+    fill(&mut img, Rect { x1: 40, y1: 40, x2: 960, y2: 106 }, [28, 50, 46]);
+    fill(&mut img, spec.address_qr, Region::AddressQr.marker_rgb());
+    fill(&mut img, spec.privkey_qr, Region::PrivkeyQr.marker_rgb());
+    fill(&mut img, spec.address_text.unwrap(), Region::AddressText.marker_rgb());
+    fill(&mut img, spec.privkey_text.unwrap(), Region::PrivkeyText.marker_rgb());
+    fill(&mut img, spec.timestamp.unwrap(), Region::Timestamp.marker_rgb());
+
+    let template_png = encode(&img);
+    assert_eq!(TemplateSpec::detect(&img).unwrap(), spec);
+    let wallet = wallet_for(Variant::TaprootBackup);
+    let png = template::compose_custom_bill(&template_png, &wallet, TS).unwrap();
+    assert_no_marker_pixels(&png);
+    let out = image::load_from_memory(&png).unwrap().to_rgb8();
+    assert_eq!(out.dimensions(), (1000, 1000));
+    // WIF marker healed back to the dark plate color at an untouched corner.
+    assert_eq!(out.get_pixel(60, 52).0, [28, 50, 46]);
+    let contents = decode_qrs(&png);
+    assert_eq!(contents.len(), 2, "square canvas: expected both QRs to scan");
+    assert!(contents.contains(&qr::address_payload(&wallet.address)));
+    assert!(contents.contains(&qr::sweep_url(&wallet.bill_wif, Variant::TaprootBackup)));
+}
+
 // ---- design kit -----------------------------------------------------------
 
 #[test]
