@@ -72,6 +72,10 @@ export global SaveBrowser {
     in property <string> status: "";
     // Proposed base filename (saved as <filename>.png + <filename>.json).
     in-out property <string> filename: "";
+    // When true the browser exports the design kit (fixed filenames, no
+    // filename input; back/cancel return to the template picker) instead
+    // of saving the previewed bill.
+    in-out property <bool> kit-mode: false;
 }
 
 // The freshly generated (not yet saved) wallet shown on the preview screen.

@@ -71,11 +71,13 @@ Rules the app checks when you pick a template:
   backgrounds, light on dark ones. A timestamp rectangle taller than wide
   is drawn rotated (reading bottom-to-top), like the satoshi bill's.
 
-**Getting started:** tap **Bill design → Export design kit to Airlock** in
-the app. It writes `template.png` (blank canvas with the labeled marker
-rectangles at the classic positions), `satoshi-example.png` (the built-in
-artwork as a working marker template), and a `README.txt` with this table to
-`Airlock:/paper-wallets/design-kit`. Restyle either file, drop the result in
+**Getting started:** tap **Bill design → Export design kit…** in the app
+and pick where to save it (Internal / Airlock / USB via the save browser;
+defaults to `Airlock:/paper-wallets/design-kit` when Airlock is available,
+Internal otherwise). It writes `template.png` (blank canvas with the labeled
+marker rectangles at the classic positions), `satoshi-example.png` (the
+built-in artwork as a working marker template), and a `README.txt` with
+this table. Restyle either file, drop the result in
 `/paper-wallets/templates` on Internal or Airlock storage, and pick it under
 **Bill design** — the picker validates the markers and reports exactly
 what's wrong if a region is missing or malformed. The selected design

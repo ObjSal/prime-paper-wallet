@@ -285,6 +285,7 @@ fn app_main(cx: AppContext, ui: AppWindow) {
                 s.save_path = default_path.clone();
             }
             let browser = ui.global::<SaveBrowser>();
+            browser.set_kit_mode(false);
             browser.set_location_index(1);
             browser.set_filename(format!("bitcoin_bill_{addr12}").into());
             log::info!("cb: open-save-browser loc=airlock path={default_path}");
@@ -384,6 +385,45 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         let refresh_gifts = refresh_gifts.clone();
         ui.global::<Callbacks>().on_save_confirm(move |filename| {
             let Some(u) = ui_weak.upgrade() else { return };
+
+            // Kit mode: write the design kit into the browser's cursor
+            // (fixed filenames — the typed filename is ignored).
+            if u.global::<SaveBrowser>().get_kit_mode() {
+                u.global::<Ui>().set_error("".into());
+                u.global::<Ui>().set_busy(true);
+                let fs = fs.clone();
+                let ui_weak = ui_weak.clone();
+                let state = state.clone();
+                Timer::single_shot(Duration::from_millis(150), move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
+                    let (loc, dir) = {
+                        let s = state.borrow();
+                        (s.save_location, s.save_path.clone())
+                    };
+                    let result = write_design_kit(&fs, loc, &dir);
+                    ui.global::<Ui>().set_busy(false);
+                    match result {
+                        Ok(()) => {
+                            log::info!(
+                                "cb: export-design-kit ok loc={} dir={dir}",
+                                location_name(loc)
+                            );
+                            ui.global::<Templates>().set_status(
+                                format!("Design kit exported to {} {dir}", location_display(loc))
+                                    .into(),
+                            );
+                            ui.global::<SaveBrowser>().set_kit_mode(false);
+                            ui.global::<Ui>().set_screen(5);
+                        }
+                        Err(e) => {
+                            log::info!("cb: export-design-kit err={e}");
+                            ui.global::<Ui>().set_error(e.into());
+                        }
+                    }
+                });
+                return;
+            }
+
             let name = filename.trim().to_string();
             if name.is_empty() || name.contains('/') {
                 u.global::<Ui>().set_error("Invalid file name".into());
@@ -644,68 +684,36 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         });
     }
 
-    // Write the design kit (blank template + satoshi example + README) to
-    // Airlock so a designer can copy it off and restyle it.
+    // "Export design kit": open the save browser in kit mode so the user
+    // picks where the kit lands (Airlock may not be available). Defaults to
+    // Airlock:/paper-wallets/design-kit when it mounts, else Internal root.
     {
         let fs = fs.clone();
         let ui_weak = ui_weak.clone();
+        let state = state.clone();
+        let refresh_save = refresh_save.clone();
         ui.global::<Callbacks>().on_export_design_kit(move || {
-            let Some(u) = ui_weak.upgrade() else { return };
-            u.global::<Ui>().set_error("".into());
-            u.global::<Templates>().set_status("".into());
-            u.global::<Ui>().set_busy(true);
-
-            let fs = fs.clone();
-            let ui_weak = ui_weak.clone();
-            Timer::single_shot(Duration::from_millis(150), move || {
-                let Some(ui) = ui_weak.upgrade() else { return };
-                let result = ensure_airlock_mounted(&fs)
-                    .and_then(|_| create_dir_ok(&fs, EXPORT_DIR, Location::Airlock))
-                    .and_then(|_| create_dir_ok(&fs, DESIGN_KIT_DIR, Location::Airlock))
-                    .and_then(|_| template::render_design_kit().map_err(|e| e.to_string()))
-                    .and_then(|kit| {
-                        write_bytes(
-                            &fs,
-                            &join_path(DESIGN_KIT_DIR, "template.png"),
-                            Location::Airlock,
-                            &kit.template_png,
-                        )?;
-                        write_bytes(
-                            &fs,
-                            &join_path(DESIGN_KIT_DIR, "satoshi-example.png"),
-                            Location::Airlock,
-                            &kit.satoshi_example_png,
-                        )?;
-                        write_bytes(
-                            &fs,
-                            &join_path(DESIGN_KIT_DIR, "README.txt"),
-                            Location::Airlock,
-                            template::design_kit_readme().as_bytes(),
-                        )
-                    });
-                // Same durability path as saving a bill: unmount Airlock
-                // (full flush) and flush User (carries the airlock image).
-                let mut flush_fs = (*fs).clone();
-                if let Err(e) = flush_fs.unmount_airlock() {
-                    log::warn!("airlock unmount after kit export failed: {e:?}");
-                }
-                if let Err(e) = flush_fs.flush(Location::User) {
-                    log::warn!("flush User failed: {e:?}");
-                }
-                ui.global::<Ui>().set_busy(false);
-                match result {
-                    Ok(()) => {
-                        log::info!("cb: export-design-kit ok dir={DESIGN_KIT_DIR}");
-                        ui.global::<Templates>().set_status(
-                            format!("Design kit exported to Airlock:{DESIGN_KIT_DIR}").into(),
-                        );
-                    }
-                    Err(e) => {
-                        log::info!("cb: export-design-kit err={e}");
-                        ui.global::<Ui>().set_error(e.into());
-                    }
-                }
-            });
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.global::<Ui>().set_error("".into());
+            ui.global::<Templates>().set_status("".into());
+            let (loc, tab, path) = if ensure_airlock_mounted(&fs).is_ok() {
+                let _ = create_dir_ok(&fs, EXPORT_DIR, Location::Airlock);
+                let _ = create_dir_ok(&fs, DESIGN_KIT_DIR, Location::Airlock);
+                (Location::Airlock, 1, DESIGN_KIT_DIR.to_string())
+            } else {
+                (Location::User, 0, "/".to_string())
+            };
+            {
+                let mut s = state.borrow_mut();
+                s.save_location = loc;
+                s.save_path = path.clone();
+            }
+            let browser = ui.global::<SaveBrowser>();
+            browser.set_kit_mode(true);
+            browser.set_location_index(tab);
+            log::info!("cb: open-kit-browser loc={} path={path}", location_name(loc));
+            refresh_save();
+            ui.global::<Ui>().set_screen(4);
         });
     }
 
@@ -797,6 +805,40 @@ fn save_gift(
 
 fn serde_json_string(record: &GiftRecord) -> Result<String, ()> {
     wallet_core::backup::to_json_pretty(record).map_err(|_| ())
+}
+
+/// Write the design kit (blank template + satoshi example + README) into
+/// the user-chosen location/directory, with the same durability flush as a
+/// bill save. Kit files are regenerable, so overwriting is fine.
+fn write_design_kit(fs: &Fs, loc: Location, dir: &str) -> Result<(), String> {
+    if loc == Location::Airlock {
+        ensure_airlock_mounted(fs)?;
+    }
+    let kit = template::render_design_kit().map_err(|e| e.to_string())?;
+    write_bytes(fs, &join_path(dir, "template.png"), loc, &kit.template_png)?;
+    write_bytes(fs, &join_path(dir, "satoshi-example.png"), loc, &kit.satoshi_example_png)?;
+    write_bytes(
+        fs,
+        &join_path(dir, "README.txt"),
+        loc,
+        template::design_kit_readme().as_bytes(),
+    )?;
+
+    let mut flush_fs = fs.clone();
+    if loc == Location::Airlock {
+        if let Err(e) = flush_fs.unmount_airlock() {
+            log::warn!("airlock unmount after kit export failed: {e:?}");
+        }
+    }
+    if loc == Location::Usb {
+        if let Err(e) = flush_fs.flush(Location::Usb) {
+            log::warn!("flush Usb failed: {e:?}");
+        }
+    }
+    if let Err(e) = flush_fs.flush(Location::User) {
+        log::warn!("flush User failed: {e:?}");
+    }
+    Ok(())
 }
 
 /// Mount Airlock before exporting (idempotent server-side). Nothing mounts

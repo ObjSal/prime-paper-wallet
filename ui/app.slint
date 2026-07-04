@@ -736,11 +736,16 @@ export component AppWindow inherits Window {
                 BackBtn {
                     clicked => {
                         Ui.show-new-folder = false;
-                        Ui.screen = 1;
+                        if (SaveBrowser.kit-mode) {
+                            SaveBrowser.kit-mode = false;
+                            Ui.screen = 5;
+                        } else {
+                            Ui.screen = 1;
+                        }
                     }
                 }
                 Text {
-                    text: "Save bill";
+                    text: SaveBrowser.kit-mode ? "Export design kit" : "Save bill";
                     color: Theme.palette-foreground;
                     font-family: "Montserrat";
                     font-size: 22px;
@@ -754,14 +759,18 @@ export component AppWindow inherits Window {
             // covers it, and "Done" just drops the keyboard. vertical-stretch 0
             // keeps the header block pinned when the listing is empty (all
             // spare space must go to the Flickable, or tap targets shift).
-            Input {
+            // Kit mode writes fixed filenames, so the input is hidden.
+            if !SaveBrowser.kit-mode: Input {
                 vertical-stretch: 0;
                 value <=> SaveBrowser.filename;
                 placeholder: "File name";
                 submitted => { self.clear-focus(); }
             }
             Text {
-                text: "Saves " + SaveBrowser.filename + ".png + .json";
+                vertical-stretch: 0;
+                text: SaveBrowser.kit-mode
+                    ? "Saves template.png + satoshi-example.png + README.txt"
+                    : "Saves " + SaveBrowser.filename + ".png + .json";
                 color: Theme.palette-muted;
                 font-family: "Montserrat";
                 font-size: 12px;
@@ -849,7 +858,12 @@ export component AppWindow inherits Window {
                     disabled: Ui.busy;
                     clicked => {
                         Ui.show-new-folder = false;
-                        Ui.screen = 1;
+                        if (SaveBrowser.kit-mode) {
+                            SaveBrowser.kit-mode = false;
+                            Ui.screen = 5;
+                        } else {
+                            Ui.screen = 1;
+                        }
                     }
                 }
                 PrimaryAction {
@@ -929,7 +943,7 @@ export component AppWindow inherits Window {
 
             PrimaryAction {
                 width: 100%;
-                text: "Export design kit to Airlock";
+                text: "Export design kit…";
                 disabled: Ui.busy;
                 clicked => { Callbacks.export-design-kit(); }
             }
