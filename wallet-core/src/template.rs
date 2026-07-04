@@ -424,9 +424,12 @@ fn ring_majority_color(img: &RgbImage, rect: Rect) -> Rgb<u8> {
         tally(rect.x1 as i64 - 1, y);
         tally(rect.x2 as i64, y);
     }
+    // Ties broken by color value: HashMap iteration order is random per
+    // process, and composition must stay deterministic (a gradient ring
+    // makes every count 1).
     counts
         .into_iter()
-        .max_by_key(|(_, n)| *n)
+        .max_by_key(|(c, n)| (*n, *c))
         .map(|(c, _)| Rgb(c))
         .unwrap_or(WHITE)
 }
