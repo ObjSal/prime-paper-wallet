@@ -10,7 +10,7 @@ use slint_keyos_platform::fs::{self, Location, OpenFlags};
 use slint_keyos_platform::qrcode;
 use slint_keyos_platform::slint::{Color, ComponentHandle, Image, ModelRc, Timer, VecModel};
 use wallet_core::backup::GiftRecord;
-use wallet_core::{bill, derive, keys, qr, Variant};
+use wallet_core::{bill, derive, keys, qr, template, Variant};
 
 app_ui!("prime-paper-wallet");
 security::use_api!();
@@ -22,8 +22,19 @@ security::use_api!();
 const META_DIR: &str = "/.paper-wallets-meta";
 /// Default export directory offered in the save browser (on Airlock).
 const EXPORT_DIR: &str = "/paper-wallets";
+/// Custom bill designs are scanned from here (Internal and Airlock).
+const TEMPLATES_DIR: &str = "/paper-wallets/templates";
+/// "Export design kit" writes the blank template + satoshi example here.
+const DESIGN_KIT_DIR: &str = "/paper-wallets/design-kit";
 
 type Fs = fs::FileSystem<fs_permissions::FileSystemPermissions>;
+
+/// One custom template found by the picker's scan.
+struct TemplateChoice {
+    name: String,
+    loc: Location,
+    path: String,
+}
 
 /// Mutable app state shared across the UI callbacks.
 struct State {
@@ -35,6 +46,13 @@ struct State {
     /// Save-browser cursor: where "Save here" will write the bill.
     save_location: Location,
     save_path: String,
+    /// Picker scan results (UI row 0 is the implicit built-in satoshi).
+    templates: Vec<TemplateChoice>,
+    /// Validated custom design for the next saves: (display name, PNG
+    /// bytes). Bytes are cached at pick time because saving unmounts
+    /// Airlock afterwards — never re-read the path at save time.
+    /// None = built-in satoshi bill.
+    selected_template: Option<(String, Vec<u8>)>,
 }
 
 fn app_main(cx: AppContext, ui: AppWindow) {
@@ -50,6 +68,8 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         open_gift: None,
         save_location: Location::Airlock,
         save_path: EXPORT_DIR.to_string(),
+        templates: Vec::new(),
+        selected_template: None,
     }));
 
     if let Err(e) = fs.create_dir(META_DIR, Location::User) {
@@ -382,17 +402,25 @@ fn app_main(cx: AppContext, ui: AppWindow) {
                     let s = state.borrow();
                     (s.save_location, s.save_path.clone())
                 };
-                let result = state
-                    .borrow()
-                    .current
-                    .as_ref()
-                    .ok_or_else(|| "Nothing to save".to_string())
-                    .and_then(|(wallet, year, ts)| save_gift(&fs, wallet, year, ts, loc, &dir, &name));
+                let (result, template_log) = {
+                    let s = state.borrow();
+                    let tpl = s.selected_template.as_ref().map(|(n, b)| (n.as_str(), b.as_slice()));
+                    let template_log =
+                        tpl.map(|(n, _)| n.to_string()).unwrap_or_else(|| "builtin".to_string());
+                    let result = s
+                        .current
+                        .as_ref()
+                        .ok_or_else(|| "Nothing to save".to_string())
+                        .and_then(|(wallet, year, ts)| {
+                            save_gift(&fs, wallet, year, ts, loc, &dir, &name, tpl)
+                        });
+                    (result, template_log)
+                };
                 ui.global::<Ui>().set_busy(false);
                 match result {
                     Ok((png_path, json_path)) => {
                         log::info!(
-                            "cb: save-bill ok loc={} png={png_path} json={json_path}",
+                            "cb: save-bill ok loc={} png={png_path} json={json_path} template={template_log}",
                             location_name(loc)
                         );
                         let p = ui.global::<Preview>();
@@ -512,6 +540,175 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         });
     }
 
+    // Open the bill-design picker: scan the templates folders and list the
+    // built-in satoshi design plus every custom PNG found.
+    {
+        let fs = fs.clone();
+        let ui_weak = ui_weak.clone();
+        let state = state.clone();
+        ui.global::<Callbacks>().on_open_template_picker(move || {
+            let Some(u) = ui_weak.upgrade() else { return };
+            u.global::<Ui>().set_error("".into());
+            u.global::<Templates>().set_status("".into());
+            u.global::<Ui>().set_busy(true);
+
+            let fs = fs.clone();
+            let ui_weak = ui_weak.clone();
+            let state = state.clone();
+            Timer::single_shot(Duration::from_millis(150), move || {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let mut templates = scan_templates_at(&fs, Location::User);
+                let airlock_ok = ensure_airlock_mounted(&fs).is_ok();
+                let airlock = if airlock_ok {
+                    scan_templates_at(&fs, Location::Airlock)
+                } else {
+                    Vec::new()
+                };
+                log::info!(
+                    "cb: scan-templates internal={} airlock={}",
+                    templates.len(),
+                    airlock.len()
+                );
+                templates.extend(airlock);
+                let selected = state.borrow().selected_template.as_ref().map(|(n, _)| n.clone());
+                let rows = template_rows(&templates, selected.as_deref());
+                let t = ui.global::<Templates>();
+                t.set_rows(ModelRc::new(VecModel::from(rows)));
+                if !airlock_ok {
+                    t.set_status("Airlock unavailable — showing internal designs only".into());
+                }
+                state.borrow_mut().templates = templates;
+                ui.global::<Ui>().set_busy(false);
+                ui.global::<Ui>().set_screen(5);
+            });
+        });
+    }
+
+    // Pick a design: row 0 is the built-in satoshi bill; other rows read
+    // and validate the custom PNG, caching its bytes for the next saves.
+    {
+        let fs = fs.clone();
+        let ui_weak = ui_weak.clone();
+        let state = state.clone();
+        ui.global::<Callbacks>().on_pick_template(move |idx| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            if idx <= 0 {
+                state.borrow_mut().selected_template = None;
+                u.global::<Templates>().set_selected_name("Satoshi bill".into());
+                u.global::<Ui>().set_error("".into());
+                log::info!("cb: pick-template builtin ok");
+                u.global::<Ui>().set_screen(0);
+                return;
+            }
+            let Some(choice) = state
+                .borrow()
+                .templates
+                .get(idx as usize - 1)
+                .map(|t| (t.name.clone(), t.loc, t.path.clone()))
+            else {
+                return;
+            };
+            u.global::<Ui>().set_error("".into());
+            u.global::<Ui>().set_busy(true);
+
+            let fs = fs.clone();
+            let ui_weak = ui_weak.clone();
+            let state = state.clone();
+            Timer::single_shot(Duration::from_millis(150), move || {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let (name, loc, path) = choice;
+                let mount = if loc == Location::Airlock {
+                    ensure_airlock_mounted(&fs)
+                } else {
+                    Ok(())
+                };
+                let result = mount.and_then(|_| read_bytes(&fs, &path, loc)).and_then(|bytes| {
+                    template::validate_template(&bytes)
+                        .map(|_| bytes)
+                        .map_err(|e| e.to_string())
+                });
+                ui.global::<Ui>().set_busy(false);
+                match result {
+                    Ok(bytes) => {
+                        log::info!("cb: pick-template {}:{path} ok", location_name(loc));
+                        ui.global::<Templates>().set_selected_name(name.as_str().into());
+                        state.borrow_mut().selected_template = Some((name, bytes));
+                        ui.global::<Ui>().set_screen(0);
+                    }
+                    Err(e) => {
+                        log::info!("cb: pick-template {}:{path} err={e}", location_name(loc));
+                        ui.global::<Ui>().set_error(e.into());
+                    }
+                }
+            });
+        });
+    }
+
+    // Write the design kit (blank template + satoshi example + README) to
+    // Airlock so a designer can copy it off and restyle it.
+    {
+        let fs = fs.clone();
+        let ui_weak = ui_weak.clone();
+        ui.global::<Callbacks>().on_export_design_kit(move || {
+            let Some(u) = ui_weak.upgrade() else { return };
+            u.global::<Ui>().set_error("".into());
+            u.global::<Templates>().set_status("".into());
+            u.global::<Ui>().set_busy(true);
+
+            let fs = fs.clone();
+            let ui_weak = ui_weak.clone();
+            Timer::single_shot(Duration::from_millis(150), move || {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let result = ensure_airlock_mounted(&fs)
+                    .and_then(|_| create_dir_ok(&fs, EXPORT_DIR, Location::Airlock))
+                    .and_then(|_| create_dir_ok(&fs, DESIGN_KIT_DIR, Location::Airlock))
+                    .and_then(|_| template::render_design_kit().map_err(|e| e.to_string()))
+                    .and_then(|kit| {
+                        write_bytes(
+                            &fs,
+                            &join_path(DESIGN_KIT_DIR, "template.png"),
+                            Location::Airlock,
+                            &kit.template_png,
+                        )?;
+                        write_bytes(
+                            &fs,
+                            &join_path(DESIGN_KIT_DIR, "satoshi-example.png"),
+                            Location::Airlock,
+                            &kit.satoshi_example_png,
+                        )?;
+                        write_bytes(
+                            &fs,
+                            &join_path(DESIGN_KIT_DIR, "README.txt"),
+                            Location::Airlock,
+                            template::design_kit_readme().as_bytes(),
+                        )
+                    });
+                // Same durability path as saving a bill: unmount Airlock
+                // (full flush) and flush User (carries the airlock image).
+                let mut flush_fs = (*fs).clone();
+                if let Err(e) = flush_fs.unmount_airlock() {
+                    log::warn!("airlock unmount after kit export failed: {e:?}");
+                }
+                if let Err(e) = flush_fs.flush(Location::User) {
+                    log::warn!("flush User failed: {e:?}");
+                }
+                ui.global::<Ui>().set_busy(false);
+                match result {
+                    Ok(()) => {
+                        log::info!("cb: export-design-kit ok dir={DESIGN_KIT_DIR}");
+                        ui.global::<Templates>().set_status(
+                            format!("Design kit exported to Airlock:{DESIGN_KIT_DIR}").into(),
+                        );
+                    }
+                    Err(e) => {
+                        log::info!("cb: export-design-kit err={e}");
+                        ui.global::<Ui>().set_error(e.into());
+                    }
+                }
+            });
+        });
+    }
+
     ui.run().expect("UI running");
 }
 
@@ -521,6 +718,8 @@ fn app_main(cx: AppContext, ui: AppWindow) {
 
 /// Write bill PNG + full backup JSON to the user-chosen location/directory,
 /// and the metadata record to Internal storage. Returns (png_path, json_path).
+/// `template` = (name, PNG bytes) of a picked custom design; None renders
+/// the built-in satoshi bill.
 fn save_gift(
     fs: &Fs,
     wallet: &wallet_core::Wallet,
@@ -529,6 +728,7 @@ fn save_gift(
     loc: Location,
     dir: &str,
     name: &str,
+    template: Option<(&str, &[u8])>,
 ) -> Result<(String, String), String> {
     let png_path = join_path(dir, &format!("{name}.png"));
     let json_path = join_path(dir, &format!("{name}.json"));
@@ -542,7 +742,12 @@ fn save_gift(
         return Err(format!("{name}.png already exists — pick another name"));
     }
 
-    let png = bill::compose_bill(wallet, year, ts).map_err(|e| e.to_string())?;
+    let png = match template {
+        Some((_, bytes)) => {
+            template::compose_custom_bill(bytes, wallet, ts).map_err(|e| e.to_string())?
+        }
+        None => bill::compose_bill(wallet, year, ts).map_err(|e| e.to_string())?,
+    };
     write_bytes(fs, &png_path, loc, &png)?;
     write_bytes(
         fs,
@@ -726,6 +931,60 @@ fn human_size(n: u64) -> String {
         format!("{n} B")
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// List the custom-design PNGs in TEMPLATES_DIR at `loc` (missing dir = none).
+fn scan_templates_at(fs: &Fs, loc: Location) -> Vec<TemplateChoice> {
+    let mut found = Vec::new();
+    if let Ok(dir) = fs.open_dir(TEMPLATES_DIR, loc) {
+        while let Ok(Some(entry)) = dir.next_entry() {
+            if entry.is_file
+                && !entry.name.starts_with('.')
+                && entry.name.to_lowercase().ends_with(".png")
+            {
+                let name = entry.name[..entry.name.len() - 4].to_string();
+                found.push(TemplateChoice {
+                    name,
+                    loc,
+                    path: join_path(TEMPLATES_DIR, &entry.name),
+                });
+            }
+        }
+    }
+    found.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    found
+}
+
+/// Picker rows: the built-in satoshi design first, then the scanned customs.
+/// `selected` is the display name of the picked custom design (None = built-in).
+fn template_rows(templates: &[TemplateChoice], selected: Option<&str>) -> Vec<TemplateRow> {
+    let mut rows = vec![TemplateRow {
+        name: "Satoshi bill".into(),
+        location: "built-in".into(),
+        selected: selected.is_none(),
+    }];
+    rows.extend(templates.iter().map(|t| TemplateRow {
+        name: t.name.as_str().into(),
+        location: location_title(t.loc).into(),
+        selected: selected == Some(t.name.as_str()),
+    }));
+    rows
+}
+
+fn location_title(loc: Location) -> &'static str {
+    match loc {
+        Location::Airlock => "Airlock",
+        Location::Usb => "USB",
+        _ => "Internal",
+    }
+}
+
+fn create_dir_ok(fs: &Fs, path: &str, loc: Location) -> Result<(), String> {
+    match fs.create_dir(path, loc) {
+        Ok(_) => Ok(()),
+        Err(fs::Error::FileAlreadyExists) => Ok(()),
+        Err(e) => Err(err_msg(&e)),
     }
 }
 

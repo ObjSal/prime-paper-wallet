@@ -7,7 +7,7 @@ use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
 
 use crate::qr::{self, QrMatrix};
 use crate::text::{self, BillFont};
-use crate::{Error, Variant, Wallet};
+use crate::{template, Error, Wallet};
 
 pub const BILL_WIDTH: u32 = 1843;
 pub const BILL_HEIGHT: u32 = 784;
@@ -16,19 +16,16 @@ static TEMPLATE: &[u8] = include_bytes!("../assets/bill_template.png");
 
 const BANNER_COLOR: Rgb<u8> = Rgb([253, 229, 167]);
 const BANNER_TEXT_COLOR: Rgb<u8> = Rgb([0, 161, 210]);
-const INK: Rgb<u8> = Rgb([30, 30, 30]);
-const BLACK: Rgb<u8> = Rgb([0, 0, 0]);
-const WHITE: Rgb<u8> = Rgb([255, 255, 255]);
+pub(crate) const INK: Rgb<u8> = Rgb([30, 30, 30]);
+pub(crate) const BLACK: Rgb<u8> = Rgb([0, 0, 0]);
+pub(crate) const WHITE: Rgb<u8> = Rgb([255, 255, 255]);
 
-// Overlay boxes (x1, y1, x2, y2), from bill_generator.js.
-const ADDRESS_QR_BOX: (f32, f32, f32, f32) = (35.0, 469.0, 319.0, 752.0);
-const PRIVKEY_QR_BOX: (f32, f32, f32, f32) = (1525.0, 40.0, 1808.0, 324.0);
-const PRIVKEY_TEXT_AREA: (f32, f32, f32, f32) = (1100.0, 2.0, 1808.0, 30.0);
-const ADDRESS_TEXT_BOX: (f32, f32, f32, f32) = (348.0, 694.0, 1148.0, 751.0);
+// The satoshi-only banner boxes; the content regions live in
+// `template::satoshi_spec` (the classic bill_generator.js layout).
 const BANNER_LEFT_BOX: (u32, u32, u32, u32) = (1082, 305, 1225, 339);
 const BANNER_RIGHT_BOX: (u32, u32, u32, u32) = (1326, 305, 1425, 339);
 
-fn fill_rect(img: &mut RgbImage, x1: u32, y1: u32, x2: u32, y2: u32, color: Rgb<u8>) {
+pub(crate) fn fill_rect(img: &mut RgbImage, x1: u32, y1: u32, x2: u32, y2: u32, color: Rgb<u8>) {
     for y in y1..y2.min(img.height()) {
         for x in x1..x2.min(img.width()) {
             img.put_pixel(x, y, color);
@@ -62,7 +59,7 @@ fn draw_qr(img: &mut RgbImage, matrix: &QrMatrix, x: f32, y: f32, module_size: f
     }
 }
 
-fn paste_qr_in_box(
+pub(crate) fn paste_qr_in_box(
     img: &mut RgbImage,
     payload: &str,
     bx: (f32, f32, f32, f32),
@@ -79,15 +76,34 @@ fn paste_qr_in_box(
     Ok(())
 }
 
-/// Compose the bill for `wallet`; `year` and `timestamp_utc` (e.g. "2026" /
-/// "2026-07-02 21:14:03 UTC") are injected for determinism. Returns PNG bytes.
-pub fn compose_bill(wallet: &Wallet, year: &str, timestamp_utc: &str) -> Result<Vec<u8>, Error> {
-    let mut img = image::load_from_memory_with_format(TEMPLATE, image::ImageFormat::Png)
+/// The embedded satoshi artwork (no markers), decoded.
+pub(crate) fn decode_satoshi_art() -> Result<RgbImage, Error> {
+    let img = image::load_from_memory_with_format(TEMPLATE, image::ImageFormat::Png)
         .map_err(|_| Error::Render)?
         .to_rgb8();
     if img.dimensions() != (BILL_WIDTH, BILL_HEIGHT) {
         return Err(Error::Render);
     }
+    Ok(img)
+}
+
+/// Encode with the settings every bill/kit PNG uses.
+pub(crate) fn encode_png(img: &RgbImage) -> Result<Vec<u8>, Error> {
+    let mut out = Vec::new();
+    PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(img, img.width(), img.height(), ExtendedColorType::Rgb8)
+        .map_err(|_| Error::Render)?;
+    Ok(out)
+}
+
+/// Compose the built-in satoshi bill for `wallet`; `year` and `timestamp_utc`
+/// (e.g. "2026" / "2026-07-02 21:14:03 UTC") are injected for determinism.
+/// Runs the satoshi-only banner pass, then the same marker engine custom
+/// templates use (`template::compose_on`, spec from `template::satoshi_spec`
+/// — the unmarked art has no marker pixels, so healing is a no-op). Output
+/// is pinned byte-for-byte by tests/fixtures/master_satoshi_*.png.
+pub fn compose_bill(wallet: &Wallet, year: &str, timestamp_utc: &str) -> Result<Vec<u8>, Error> {
+    let mut img = decode_satoshi_art()?;
 
     // 0. Banner: cover old text, redraw motto and year (web draws these in a
     // bold sans; DejaVu Sans Condensed regular is our embeddable stand-in).
@@ -126,90 +142,11 @@ pub fn compose_bill(wallet: &Wallet, year: &str, timestamp_utc: &str) -> Result<
         text::draw_text(&mut img, BillFont::Condensed, size, tx, ty, BANNER_TEXT_COLOR, year);
     }
 
-    // 1. Address QR (uppercased payload → alphanumeric mode).
-    paste_qr_in_box(&mut img, &qr::address_payload(&wallet.address), ADDRESS_QR_BOX)?;
+    // 1-5. QRs, "(tweaked)" label, WIF strip, address band, timestamp —
+    // the shared marker engine, at the classic satoshi positions.
+    template::compose_on(&mut img, &template::satoshi_spec(), wallet, timestamp_utc)?;
 
-    // 2. Private-key QR: sweep URL with WIF/network/type pre-filled.
-    let sweep = qr::sweep_url(&wallet.bill_wif, wallet.variant);
-    paste_qr_in_box(&mut img, &sweep, PRIVKEY_QR_BOX)?;
-
-    // 2b. "(tweaked)" label inside the privkey QR white box.
-    if wallet.is_tweaked {
-        let label = "(tweaked)";
-        let width = text::measure(BillFont::Condensed, 12.0, label);
-        text::draw_text(
-            &mut img,
-            BillFont::Condensed,
-            12.0,
-            PRIVKEY_QR_BOX.2 - width - 3.0,
-            PRIVKEY_QR_BOX.3 - 3.0,
-            INK,
-            label,
-        );
-    }
-
-    // 3. Private-key text on the orange strip, right-aligned to x=1808.
-    {
-        let (x1, y1, x2, y2) = PRIVKEY_TEXT_AREA;
-        let (tw, th) = (x2 - x1, y2 - y1);
-        let wif = wallet.bill_wif.as_str();
-        if wallet.is_tweaked {
-            let suffix = " (tweaked)";
-            let suffix_w = text::measure(BillFont::Condensed, 12.0, suffix);
-            let avail = tw - suffix_w - 2.0;
-            let (size, width) = text::fit_to_box(BillFont::Mono, wif, avail, th, 24);
-            let suffix_x = 1808.0 - suffix_w;
-            let text_x = suffix_x - width - 2.0;
-            let text_y = y1 + (th + size * 0.8) / 2.0;
-            text::draw_text(&mut img, BillFont::Mono, size, text_x, text_y, INK, wif);
-            let suffix_y = y1 + (th + 12.0 * 0.8) / 2.0;
-            text::draw_text(&mut img, BillFont::Condensed, 12.0, suffix_x, suffix_y, INK, suffix);
-        } else {
-            let (size, width) = text::fit_to_box(BillFont::Mono, wif, tw, th, 24);
-            let text_x = 1808.0 - width;
-            let text_y = y1 + (th + size * 0.8) / 2.0;
-            text::draw_text(&mut img, BillFont::Mono, size, text_x, text_y, INK, wif);
-        }
-    }
-
-    // 4. Address text, centered in the bottom band; condensed for the longer
-    // taproot addresses, mono for segwit (same rule as the web generator).
-    {
-        let (x1, y1, x2, y2) = ADDRESS_TEXT_BOX;
-        let (tw, th) = (x2 - x1, y2 - y1);
-        let font = match wallet.variant {
-            Variant::Segwit => BillFont::Mono,
-            Variant::Taproot | Variant::TaprootBackup => BillFont::Condensed,
-        };
-        let (size, width) = text::fit_to_box(font, &wallet.address, tw, th, 36);
-        let tx = x1 + (tw - width) / 2.0;
-        let ty = y1 + (th + size * 0.8) / 2.0;
-        text::draw_text(&mut img, font, size, tx, ty, INK, &wallet.address);
-    }
-
-    // 5. Timestamp, rotated 90° CCW at the bottom-right corner.
-    {
-        let ts_size = 14.0;
-        let edge = 8.0;
-        let px = BILL_WIDTH as f32 - ts_size - edge;
-        let py = BILL_HEIGHT as f32 - edge;
-        text::draw_text_rotated_ccw(
-            &mut img,
-            BillFont::Mono,
-            ts_size,
-            px,
-            py,
-            ts_size * 0.8,
-            BLACK,
-            timestamp_utc,
-        );
-    }
-
-    let mut out = Vec::new();
-    PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Adaptive)
-        .write_image(&img, BILL_WIDTH, BILL_HEIGHT, ExtendedColorType::Rgb8)
-        .map_err(|_| Error::Render)?;
-    Ok(out)
+    encode_png(&img)
 }
 
 /// Format a unix timestamp as the bill's ("YYYY", "YYYY-MM-DD HH:MM:SS UTC")

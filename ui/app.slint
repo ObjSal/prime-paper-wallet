@@ -1,11 +1,11 @@
 import { Theme, UISize, ButtonVariant } from "@ui/theme.slint";
-import { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, SaveBrowser, FileRow } from "callbacks.slint";
+import { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, SaveBrowser, FileRow, Templates, TemplateRow } from "callbacks.slint";
 import { Button } from "@ui/button.slint";
 import { Icon } from "@ui/icon.slint";
 import { Input } from "@ui/input.slint";
 import { SegmentedControl } from "@ui/segmented_control.slint";
 
-export { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, SaveBrowser, FileRow, Theme }
+export { Callbacks, Ui, Preview, Gifts, Detail, GiftRow, SaveBrowser, FileRow, Templates, TemplateRow, Theme }
 
 component PrimaryAction inherits Button {
     background: Theme.palette-primary;
@@ -216,6 +216,60 @@ component SaveEntry inherits Rectangle {
     }
 }
 
+// One row in the bill-design picker (radio-style, like VariantOption).
+component TemplateEntry inherits Rectangle {
+    in property <TemplateRow> entry;
+    in property <int> index;
+    height: 64px;
+    border-radius: 14px;
+    background: root.entry.selected
+        ? Theme.palette-secondary
+        : Theme.palette-secondary.with-alpha(0.3);
+    TouchArea {
+        clicked => { Callbacks.pick-template(root.index); }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        Rectangle {
+            width: 22px;
+            y: (parent.height - self.height) / 2;
+            height: 22px;
+            border-radius: 11px;
+            border-width: 2px;
+            border-color: root.entry.selected ? Theme.palette-primary : Theme.palette-muted;
+            background: transparent;
+            if root.entry.selected: Rectangle {
+                x: 5px;
+                y: 5px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.palette-primary;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.entry.name;
+                color: Theme.palette-foreground;
+                font-family: "Montserrat";
+                font-size: 16px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.entry.location;
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+            }
+        }
+    }
+}
+
 component GiftEntry inherits Rectangle {
     in property <GiftRow> entry;
     height: 64px;
@@ -335,6 +389,35 @@ export component AppWindow inherits Window {
                 font-size: 13px;
                 horizontal-alignment: center;
                 wrap: word-wrap;
+            }
+
+            bill-design-row := Rectangle {
+                height: 56px;
+                border-radius: 14px;
+                background: Theme.palette-secondary.with-alpha(0.35);
+                TouchArea {
+                    clicked => { Callbacks.open-template-picker(); }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    Text {
+                        text: "Bill design: " + Templates.selected-name;
+                        color: Theme.palette-foreground;
+                        font-family: "Montserrat";
+                        font-size: 16px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "›";
+                        color: Theme.palette-muted;
+                        font-size: 22px;
+                        vertical-alignment: center;
+                    }
+                }
             }
 
             saved-gifts-row := Rectangle {
@@ -775,6 +858,80 @@ export component AppWindow inherits Window {
                     disabled: Ui.busy || SaveBrowser.status != "";
                     clicked => { Callbacks.save-confirm(SaveBrowser.filename); }
                 }
+            }
+        }
+
+        // ------------------------------------------------ screen 5: bill design
+        if Ui.screen == 5: VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 16px + UISize.control-center-status-bar-height;
+            padding-bottom: 24px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                vertical-stretch: 0;
+                spacing: 12px;
+                BackBtn {
+                    clicked => { Ui.screen = 0; }
+                }
+                Text {
+                    text: "Bill design";
+                    color: Theme.palette-foreground;
+                    font-family: "Montserrat";
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            Text {
+                vertical-stretch: 0;
+                text: "Custom designs are PNGs in /paper-wallets/templates on Internal or Airlock storage. Export the design kit for the blank template and a working example.";
+                color: Theme.palette-muted;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            if Templates.status != "": Text {
+                vertical-stretch: 0;
+                text: Templates.status;
+                color: Theme.palette-primary;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            if Ui.error != "": Text {
+                vertical-stretch: 0;
+                text: Ui.error;
+                color: #e05050;
+                font-family: "Montserrat";
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                viewport-height: template-list.preferred-height;
+                template-list := VerticalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    for t[i] in Templates.rows: TemplateEntry {
+                        entry: t;
+                        index: i;
+                    }
+                }
+            }
+
+            PrimaryAction {
+                width: 100%;
+                text: "Export design kit to Airlock";
+                disabled: Ui.busy;
+                clicked => { Callbacks.export-design-kit(); }
             }
         }
 

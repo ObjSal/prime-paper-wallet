@@ -15,6 +15,13 @@ export struct FileRow {
     is-folder: bool,
 }
 
+// One bill design in the template picker (row 0 is the built-in satoshi).
+export struct TemplateRow {
+    name: string,
+    location: string,     // "built-in", "Internal" or "Airlock"
+    selected: bool,
+}
+
 export global Callbacks {
     // variant: 0 = segwit, 1 = taproot, 2 = taproot + backup
     callback generate(int);
@@ -32,10 +39,16 @@ export global Callbacks {
     callback save-go-back();                  // up one directory
     callback save-new-folder(string);         // folder name
     callback save-confirm(string);            // filename (no extension)
+
+    // bill-design template picker (screen 5)
+    callback open-template-picker();          // scan /paper-wallets/templates
+    callback pick-template(int);              // row index (0 = built-in satoshi)
+    callback export-design-kit();             // write kit to Airlock
 }
 
 export global Ui {
-    // 0 = home, 1 = preview, 2 = saved gifts, 3 = gift detail, 4 = save browser
+    // 0 = home, 1 = preview, 2 = saved gifts, 3 = gift detail,
+    // 4 = save browser, 5 = bill-design template picker
     in-out property <int> screen: 0;
     // home-screen variant picker; default to the flagship two-key gift
     in-out property <int> variant-index: 2;
@@ -78,6 +91,15 @@ export global Preview {
 export global Gifts {
     in property <[GiftRow]> gifts;
     in property <string> status: "";
+}
+
+// State of the bill-design picker (screen 5), driven from Rust.
+export global Templates {
+    in property <[TemplateRow]> rows;
+    // Informational line: scan errors, or export-kit confirmation.
+    in property <string> status: "";
+    // Name shown on the home screen's "Bill design" row.
+    in property <string> selected-name: "Satoshi bill";
 }
 
 export global Detail {

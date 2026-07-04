@@ -11,6 +11,7 @@ pub mod derive;
 pub mod keys;
 pub mod qr;
 pub mod taproot;
+pub mod template;
 pub mod text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

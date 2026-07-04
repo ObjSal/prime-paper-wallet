@@ -42,6 +42,50 @@ along the right edge.
 > do not send funds to them. The app-screen captures likewise show throwaway
 > simulator-generated keys that never held funds.
 
+## Design your own bill
+
+The satoshi artwork is just the built-in design. A bill template is a plain
+PNG in which solid rectangles of reserved colors mark where the app places
+each element — move and resize them freely in any image editor:
+
+| Marker color | RGB | Region | Required |
+|---|---|---|---|
+| magenta | (255, 0, 255) | deposit-address QR | yes |
+| cyan | (0, 255, 255) | private-key (sweep) QR | yes |
+| green | (0, 255, 0) | address text | optional |
+| red | (255, 0, 0) | private-key (WIF) text | optional |
+| blue | (0, 0, 255) | timestamp | optional |
+
+Yellow (255, 255, 0) is reserved for future use — avoid it in artwork.
+
+Rules the app checks when you pick a template:
+
+- One solid, axis-aligned rectangle per color. Paint fully opaque with
+  anti-aliasing off (markers are matched pixel-exactly; a hollow, rotated,
+  or split marker is rejected).
+- QR rectangles need at least 64 px per side — 200+ recommended for a
+  print-scannable code. Text rectangles need at least 16 px per side.
+- Canvas can be any size up to 4096×4096.
+- Marker pixels are *healed* with the surrounding color before drawing, so
+  put text markers on a solid background. Text ink adapts: dark on light
+  backgrounds, light on dark ones. A timestamp rectangle taller than wide
+  is drawn rotated (reading bottom-to-top), like the satoshi bill's.
+
+**Getting started:** tap **Bill design → Export design kit to Airlock** in
+the app. It writes `template.png` (blank canvas with the labeled marker
+rectangles at the classic positions), `satoshi-example.png` (the built-in
+artwork as a working marker template), and a `README.txt` with this table to
+`Airlock:/paper-wallets/design-kit`. Restyle either file, drop the result in
+`/paper-wallets/templates` on Internal or Airlock storage, and pick it under
+**Bill design** — the picker validates the markers and reports exactly
+what's wrong if a region is missing or malformed. The selected design
+applies to every bill you save until you switch back.
+
+The built-in satoshi bill renders through this same marker engine (from an
+internally marker-annotated copy of its artwork), and golden master PNGs in
+`wallet-core/tests/fixtures/` pin its output byte-for-byte — so the code
+path custom templates use is the one the masters verify.
+
 ## Features
 
 - **Three variants (mainnet)**:
@@ -59,6 +103,9 @@ along the right edge.
   gift key itself is deliberately **pure TRNG**: a compromised bill can
   never endanger your seed, and gifts aren't visible to anyone restoring
   the phrase.
+- **Custom bill designs**: a template picker (built-in satoshi + PNGs from
+  `/paper-wallets/templates`), marker validation with actionable errors, and
+  an in-app design-kit export (see *Design your own bill* above).
 - **Save-as browser**: pick Internal / Airlock / USB, navigate directories,
   create folders, and name the file. Writes `<name>.png` + `<name>.json`
   together and refuses to overwrite an existing bill (a bill names a unique
@@ -128,14 +175,19 @@ nix develop ~/.foundation/sdk/current --command \
 ## Testing
 
 All wallet logic lives in the UI-free **`wallet-core/`** subcrate so it can
-be tested on the host: 15 tests covering the twin fixtures across all three
+be tested on the host: 29 tests covering the twin fixtures across all three
 variants, published BIP173/BIP350/BIP340/RIPEMD vectors, WIF round-trips,
-backup-key derivation determinism, TRNG rejection-sampling, and full bill
-composition with QR round-trip decoding. A workspace-level simulator UI test
-(`../ui-automation/tests/paper-wallet.sh`) drives every flow through real
-taps — generate + save each variant through the save browser, folder
-creation via the on-screen keyboard, the saved-gifts list, and the
-backup-key reveal.
+backup-key derivation determinism, TRNG rejection-sampling, full bill
+composition with QR round-trip decoding, and the template engine —
+**byte-for-byte parity of the built-in bill against committed golden
+masters**, marker-detection edge cases (strays, split/hollow markers,
+anti-aliased edges, size floors), heal behavior, custom-template QR
+round-trips, and a design-kit self-test. Two workspace-level simulator UI
+tests drive the flows through real taps: `../ui-automation/tests/
+paper-wallet.sh` (generate + save each variant, save browser, folder
+creation, saved-gifts list, backup reveal) and `paper-wallet-templates.sh`
+(seeded custom template: picker scan, validation, custom-rendered save,
+design-kit export, back to built-in).
 
 ## Permissions
 
@@ -150,8 +202,10 @@ fail to build) and by the KeyOS kernel at runtime.
 ## Project layout
 
 - `wallet-core/` — UI-free library: key generation, taproot tweak math,
-  addresses/WIF, backup derivation, QR payloads, bill PNG composition;
-  test suite + bill template & font assets.
+  addresses/WIF, backup derivation, QR payloads, bill PNG composition, and
+  the marker-template engine (`src/template.rs`: detection, healing, custom
+  compose, design kit); test suite (incl. golden masters under
+  `tests/fixtures/`) + bill artwork & font assets.
 - `src/main.rs` — app logic: screens, save browser, metadata persistence,
   Airlock lifecycle, callbacks.
 - `ui/app.slint`, `ui/callbacks.slint` — the UI and the Slint↔Rust bridge.
