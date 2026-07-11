@@ -20,6 +20,8 @@ A print-ready 1843×784 PNG. The left QR is the deposit address — load and ver
 
 <p align="center">
   <img src="screenshots/bill-taproot-backup.png" alt="Taproot + backup bill" width="820">
+  <br>
+  <sub>Paper wallet art by <a href="https://www.reddit.com/r/Bitcoin/comments/20rml2/heres_a_paper_wallet_enjoy_or_not_im_bored/">u/CoinCult</a></sub>
 </p>
 
 > This sample bill is rendered from **publicly known test keys** — do not send funds to it. The app-screen captures likewise show throwaway simulator keys that never held funds.

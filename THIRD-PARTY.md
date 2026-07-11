@@ -33,7 +33,7 @@ Direct dependencies of this app and its `wallet-core` library. The complete tran
 | Asset | License / credit |
 |---|---|
 | DejaVu Sans Mono & DejaVu Sans Condensed (`wallet-core/assets/`) | Bitstream Vera / DejaVu license — see `wallet-core/assets/DEJAVU-LICENSE` |
-| "Satoshi bill" artwork (`wallet-core/assets/bill_template.png`) | reddit u/CoinCult (via the bitcoin-gift-paper-wallet web app) |
+| "Satoshi bill" artwork (`wallet-core/assets/bill_template.png`) | [u/CoinCult](https://www.reddit.com/r/Bitcoin/comments/20rml2/heres_a_paper_wallet_enjoy_or_not_im_bored/) (via the bitcoin-gift-paper-wallet web app) |
 
 ## Foundation SDK / KeyOS platform
 
