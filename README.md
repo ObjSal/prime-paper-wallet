@@ -21,11 +21,8 @@ A print-ready 1843×784 PNG. The left QR is the deposit address — load and ver
 <p align="center">
   <img src="screenshots/bill-taproot-backup.png" alt="Taproot + backup bill" width="820">
 </p>
-<p align="center">
-  <img src="screenshots/bill-segwit.png" alt="SegWit bill" width="820">
-</p>
 
-> These sample bills are rendered from **publicly known test keys** — do not send funds to them. The app-screen captures likewise show throwaway simulator keys that never held funds.
+> This sample bill is rendered from **publicly known test keys** — do not send funds to it. The app-screen captures likewise show throwaway simulator keys that never held funds.
 
 ## Features
 
