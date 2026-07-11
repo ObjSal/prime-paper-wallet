@@ -7,11 +7,11 @@ Paper Wallet generates classic "satoshi bill" gift wallets entirely offline. Eac
 Bills are fully compatible with the [bitcoin-gift-paper-wallet](https://github.com/ObjSal/bitcoin-gift-wallet) web app: recipients sweep with the same guided flow, and givers recover unswept gifts with the same recovery page.
 
 <p align="center">
-  <img src="screenshots/home.png" alt="Home — variant picker" width="280">
+  <img src="screenshots/home.png" alt="Home — gift style picker" width="280">
   &nbsp;
-  <img src="screenshots/preview.png" alt="Preview — address and sweep QRs" width="280">
+  <img src="screenshots/preview.png" alt="Preview — deposit and sweep QRs" width="280">
   &nbsp;
-  <img src="screenshots/save-browser.png" alt="Save-as browser" width="280">
+  <img src="screenshots/backup-reveal.png" alt="Backup key reveal for gift recovery" width="280">
 </p>
 
 ## The bill
@@ -35,14 +35,6 @@ A print-ready 1843×784 PNG. The left QR is the deposit address — load and ver
 - **Save it your way** — a full save-as browser across Internal, Airlock, and USB with folder creation, custom filenames, and overwrite protection (a bill names a unique key — the app won't let two collide).
 - **A gift ledger without secrets** — the saved-gifts list keeps each gift's address, type, and creation date with **no private keys stored**; the backup key is re-derived and shown only on demand, exactly when recovery needs it.
 - **Offline by design** — Prime has no network stack. Sweeping, balance checks, and broadcast intentionally stay in the companion web app.
-
-<p align="center">
-  <img src="screenshots/new-folder.png" alt="New folder prompt" width="280">
-  &nbsp;
-  <img src="screenshots/saved-gifts.png" alt="Saved gifts" width="280">
-  &nbsp;
-  <img src="screenshots/backup-reveal.png" alt="Backup key reveal" width="280">
-</p>
 
 ## Get it running
 
