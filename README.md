@@ -1,4 +1,4 @@
-# Paper Wallet — a Passport Prime app
+# <img src="resources/icon.svg" alt="" width="42" align="top" /> Paper Wallet — a Passport Prime app
 
 A bitcoin **gift paper-wallet generator** for Foundation's **Passport Prime**,
 built as a Rust binary with a **Slint** UI on **KeyOS** (Foundation's Rust
