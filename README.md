@@ -229,3 +229,26 @@ workspace (alongside a local KeyOS docs knowledge base); it also builds
 standalone. Verified: signed hardware build (5.9 MB), full simulator UI test
 run, and byte-identical output against the web app's reference crypto — see
 `NOTES.md`. Bill artwork credit: reddit u/CoinCult (via the web app).
+
+## License & disclaimer
+
+Licensed under the GNU General Public License v3.0 or later — see [COPYING](COPYING). Sections 15–17 of that license disclaim all warranty and limit liability; the notes below restate that in plain language.
+
+This is experimental software and it has **not been independently audited**.
+It is provided **"as is", without warranty of any kind**, express or implied,
+including but not limited to the warranties of merchantability, fitness for a
+particular purpose, and non-infringement.
+
+**Use it at your own risk.** To the maximum extent permitted by law, in no
+event shall the authors, copyright holders, or contributors be liable for any
+claim, damages, or other liability — including, without limitation,
+**loss of bitcoin or other funds, loss of keys or seeds, or loss of data** — whether in an action of contract, tort, or
+otherwise, arising from, out of, or in connection with this software or its
+use.
+
+Nothing in this project is financial, investment, legal, or tax advice. You
+are solely responsible for verifying addresses, amounts, fees, and backups
+before moving funds, and for complying with the laws of your jurisdiction.
+Test on test networks, or with amounts you can afford to lose, first.
+
+A paper wallet is a **bearer instrument**: anyone who holds the bill — or a photo, scan, or copy of it — can take the funds. A lost or destroyed bill with no backup key is unrecoverable. Nobody can reverse a bitcoin transaction or restore keys for you.
